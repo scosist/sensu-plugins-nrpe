@@ -58,11 +58,6 @@ class CheckNRPE < Sensu::Plugin::Check::CLI
          short: '-m match',
          description: 'Regex pattern to match against returned buffer'
 
-  option :comparison,
-         short: '-o comparison operator',
-         description: 'Operator used to compare data with warning/critial values. Can be set to "le" (<=), "ge" (>=).',
-         default: 'ge'
-
   def run
     begin
       request = Nrpeclient::CheckNrpe.new({:host=> "#{config[:host]}", :port=> "#{config[:port]}", :ssl=> config[:ssl]})
@@ -72,11 +67,6 @@ class CheckNRPE < Sensu::Plugin::Check::CLI
     rescue => e
       unknown "An unknown error occured: #{e.inspect}"
     end
-    operators = { 'le' => :<=, 'ge' => :>= }
-    symbol = operators[config[:comparison]]
-    criticals = []
-    warnings = []
-    okays = []
 
     if config[:match]
       if response.buffer.to_s =~ /#{config[:match]}/
@@ -85,23 +75,17 @@ class CheckNRPE < Sensu::Plugin::Check::CLI
         critical "Buffer: #{response.buffer} failed to match Pattern: #{config[:match]}"
       end
     else
-      perfdata = response.buffer.split('|')[1].scan(/([^=]+=\S+)/)
-      perfdata.each do |pd|
-        metric = /^([^=]+)=([\d\.\-\+eE]+)([\w\/%]*);?([\d\.\-\+eE:~@]+)?;?([\d\.\-\+eE:~@]+)?;?([\d\.\-\+eE]+)?;?([\d\.\-\+eE]+)?;?\s*/.match(pd[0]) # rubocop:disable LineLength
-        criticals << "Critical state detected for #{config[:check]} on #{metric[1].strip}, value: #{metric[2].to_f}#{metric[3].strip}." if "#{metric[2]}".to_f.send(symbol, "#{metric[5]}".to_f) # rubocop:disable LineLength
-        # #YELLOW
-        warnings << "Warning state detected for #{config[:check]} on #{metric[1].strip}, value: #{metric[2].to_f}#{metric[3].strip}." if ("#{metric[2]}".to_f.send(symbol, "#{metric[4]}".to_f)) && !("#{metric[2]}".to_f.send(symbol, "#{metric[5]}".to_f)) # rubocop:disable LineLength
-        unless "#{metric[2]}".to_f.send(symbol, "#{metric[4]}".to_f)
-          okays << "All is well for #{config[:check]} on #{metric[1].strip}, value: #{metric[2].to_f}#{metric[3].strip}."
-        end
+      response_captures = response.buffer.scan(/[A-Z ]*?([A-Z]+)\s?[:-]{1}\s(.*)/)
+      response_status = response_captures[0][0].downcase
+      response_data = response_captures[0][1]
+      case response_status
+      when "critical"
+        critical response_data
+      when "warning"
+        warning response_data
+      else
+        ok response_data
       end
-      unless criticals.empty?
-        critical criticals.join(' ')
-      end
-      unless warnings.empty?
-        warning warnings.join(' ')
-      end
-      ok okays.join(' ')
     end
   end
 end
